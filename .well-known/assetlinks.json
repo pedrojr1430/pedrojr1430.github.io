@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.pedrojr1430.fraseafrase",
+      "sha256_cert_fingerprints": [
+        "5E:51:01:6A:9D:90:6C:BF:81:8C:56:25:DD:D8:91:17:5A:72:5E:77:66:B2:81:9B:39:7C:62:37:76:EC:13:4B"
+      ]
+    }
+  }
+]
