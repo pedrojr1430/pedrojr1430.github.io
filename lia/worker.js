@@ -6,7 +6,16 @@
  *   OPENAI_API_KEY  (Secret)  chave da OpenAI — obrigatória
  *   MODEL           (Text)    opcional; padrão gpt-5-mini
  *   ALLOWED_ORIGINS (Text)    opcional; padrão https://pedrojr1430.github.io
+ *   TTS_MODEL       (Text)    opcional; modelo de voz, padrão gpt-4o-mini-tts
+ *   LIA_VOICE       (Text)    opcional; voz da Lía, padrão coral
  */
+
+const VOICE_STYLE = {
+  A1: 'Fale bem devagar e com pausas claras entre as frases, articulando cada palavra.',
+  A2: 'Fale devagar e com clareza.',
+  B1: 'Fale em ritmo natural, mas claro.',
+  B2: 'Fale em ritmo natural de conversa.'
+};
 
 const SCENARIOS = {
   livre: 'Conversa livre sobre o dia a dia do aluno: rotina, família, trabalho, gostos e planos.',
@@ -74,6 +83,28 @@ export default {
     let body;
     try { body = await req.json(); } catch (e) { return json({ error: 'bad_request' }, 400); }
     const level = LEVELS[body.level] ? body.level : 'A1';
+
+    // Voz da Lía: transforma o texto da resposta em áudio (mp3).
+    if (typeof body.tts === 'string') {
+      const input = body.tts.trim().slice(0, 600);
+      if (!input) return json({ error: 'bad_request' }, 400);
+      const tr = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+        body: JSON.stringify({
+          model: env.TTS_MODEL || 'gpt-4o-mini-tts',
+          voice: env.LIA_VOICE || 'coral',
+          input,
+          instructions: 'Você é a Lía, professora de espanhol simpática e acolhedora. Fale em espanhol latino-americano neutro, com voz calorosa, sorridente e encorajadora. ' + VOICE_STYLE[level],
+          response_format: 'mp3'
+        })
+      });
+      if (!tr.ok) {
+        console.log('OpenAI TTS', tr.status, (await tr.text()).slice(0, 300));
+        return json({ error: 'tts_failed', status: tr.status }, 502);
+      }
+      return new Response(tr.body, { headers: { ...cors, 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' } });
+    }
     const scenario = SCENARIOS[body.scenario] ? body.scenario : 'livre';
     const history = (Array.isArray(body.messages) ? body.messages : [])
       .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
