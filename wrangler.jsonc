@@ -1,0 +1,8 @@
+{
+  // Worker "lia" (IA de conversação do Frase a Frase). O Cloudflare publica este arquivo a cada envio ao GitHub.
+  "name": "lia",
+  "main": "lia/worker.js",
+  "compatibility_date": "2026-11-04",
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}
