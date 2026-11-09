@@ -132,7 +132,8 @@ export default {
 
     if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
     const url = new URL(req.url);
-    if (req.method === 'GET' && url.pathname === '/voz') return voz(req, url, env, ctx);
+    // Voz de IA para o conteúdo fixo foi desativada a pedido do Pedro (só a Lía usa voz de IA).
+    if (req.method === 'GET' && url.pathname === '/voz') return new Response('desativado', { status: 410, headers: { 'Access-Control-Allow-Origin': '*' } });
     if (req.method === 'GET') return json({ ok: true, name: 'Lía' });
     if (req.method !== 'POST' || !allowed.includes(origin)) return json({ error: 'forbidden' }, 403);
     // Aceita o Secret com o nome OPENAI_API_KEY ou, se tiver outro nome, qualquer Secret com uma chave da OpenAI.
