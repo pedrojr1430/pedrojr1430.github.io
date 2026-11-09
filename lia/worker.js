@@ -94,7 +94,10 @@ export default {
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
       body: JSON.stringify(payload)
     });
-    if (!r.ok) return json({ error: 'upstream', status: r.status, detail: (await r.text()).slice(0, 300) }, 502);
+    if (!r.ok) {
+      console.log('OpenAI', r.status, (await r.text()).slice(0, 300)); // detalhe só no log do Cloudflare
+      return json({ error: r.status === 401 ? 'bad_key' : r.status === 429 ? 'quota' : 'upstream', status: r.status }, 502);
+    }
     const data = await r.json();
     const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
     let out;
