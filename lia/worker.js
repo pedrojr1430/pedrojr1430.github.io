@@ -8,7 +8,33 @@
  *   ALLOWED_ORIGINS (Text)    opcional; padrão https://pedrojr1430.github.io
  *   TTS_MODEL       (Text)    opcional; modelo de voz, padrão gpt-4o-mini-tts
  *   LIA_VOICE       (Text)    opcional; voz da Lía, padrão coral
+ *   CONTENT_VOICE   (Text)    opcional; voz das frases, textos e curso, padrão nova
+ *
+ * Rotas:
+ *   POST /           conversa com a Lía (e voz da Lía com {tts})
+ *   GET  /voz?t=&a=  voz natural das frases do app (a=es Espanha, a=mx México).
+ *                    Só gera áudio para frases que existem no conteúdo publicado do app.
  */
+
+const CONTENT_BASE = 'https://pedrojr1430.github.io/frase-a-frase/data/';
+let allowCache = { at: 0, set: null };
+function normText(s) { return String(s || '').replace(/[«»]/g, '').replace(/\s+/g, ' ').trim(); }
+async function allowedTexts() {
+  if (allowCache.set && Date.now() - allowCache.at < 10 * 60 * 1000) return allowCache.set;
+  const set = new Set();
+  const add = (s) => { if (typeof s === 'string' && s.trim()) set.add(normText(s)); };
+  const get = (f) => fetch(CONTENT_BASE + f + '?v=' + Math.floor(Date.now() / 600000)).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const [fr, tx, cu] = await Promise.all([get('frases.json'), get('textos.json'), get('curso.json')]);
+  (fr || []).forEach((c) => (c.items || []).forEach((i) => add(i.es)));
+  (tx || []).forEach((t) => (t.sentences || []).forEach((p) => add(p[0])));
+  (function walk(v) { if (typeof v === 'string') add(v); else if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') Object.values(v).forEach(walk); })(cu);
+  allowCache = { at: Date.now(), set };
+  return set;
+}
+const ACCENT = {
+  es: 'Leia em espanhol da Espanha (castelhano), com pronúncia peninsular natural.',
+  mx: 'Leia em espanhol do México, com pronúncia mexicana natural.'
+};
 
 const VOICE_STYLE = {
   A1: 'Fale bem devagar e com pausas claras entre as frases, articulando cada palavra.',
@@ -51,17 +77,49 @@ function systemPrompt(level, scenario) {
   ].join('\n');
 }
 
+// Voz natural para o conteúdo do app, com cache.
+async function voz(req, url, env, ctx) {
+  const h = { 'Access-Control-Allow-Origin': '*', 'Vary': 'Origin' };
+  const text = normText(url.searchParams.get('t'));
+  const acc = url.searchParams.get('a') === 'mx' ? 'mx' : 'es';
+  if (!text || text.length > 400) return new Response('bad request', { status: 400, headers: h });
+  const key = new Request(url.origin + '/voz?v=1&a=' + acc + '&t=' + encodeURIComponent(text));
+  const cache = caches.default;
+  try { const hit = await cache.match(key); if (hit) return hit; } catch (e) {}
+  const set = await allowedTexts();
+  if (!set.has(text)) return new Response('not allowed', { status: 403, headers: h });
+  if (limited('voz:' + (req.headers.get('CF-Connecting-IP') || 'x'), 400)) return new Response('rate limited', { status: 429, headers: h });
+  const apiKey = env.OPENAI_API_KEY || Object.values(env).find((v) => typeof v === 'string' && /^sk-/.test(v));
+  if (!apiKey) return new Response('not configured', { status: 500, headers: h });
+  const tr = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+    body: JSON.stringify({
+      model: env.TTS_MODEL || 'gpt-4o-mini-tts',
+      voice: env.CONTENT_VOICE || 'nova',
+      input: text,
+      instructions: 'Você é um professor nativo gravando áudios para um curso de espanhol. ' + ACCENT[acc] + ' Fale de forma natural e calorosa, com entonação de conversa real, articulação clara e ritmo um pouco mais pausado que o normal. Respeite a pontuação: perguntas com entonação de pergunta, exclamações com emoção.',
+      response_format: 'mp3'
+    })
+  });
+  if (!tr.ok) { console.log('OpenAI voz', tr.status, (await tr.text()).slice(0, 300)); return new Response('tts failed', { status: 502, headers: h }); }
+  const buf = await tr.arrayBuffer();
+  const resp = new Response(buf, { headers: { ...h, 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=31536000, immutable' } });
+  try { ctx.waitUntil(cache.put(key, resp.clone())); } catch (e) {}
+  return resp;
+}
+
 // Limite simples por IP (por instância do Worker): 30 mensagens a cada 10 minutos.
 const hits = new Map();
-function limited(ip) {
+function limited(ip, max) {
   const now = Date.now(), win = 10 * 60 * 1000;
   const list = (hits.get(ip) || []).filter((t) => now - t < win);
   list.push(now); hits.set(ip, list);
-  return list.length > 30;
+  return list.length > (max || 30);
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const allowed = (env.ALLOWED_ORIGINS || 'https://pedrojr1430.github.io').split(',').map((s) => s.trim());
     const origin = req.headers.get('Origin') || '';
     const cors = {
@@ -73,6 +131,8 @@ export default {
     const json = (obj, status) => new Response(JSON.stringify(obj), { status: status || 200, headers: { ...cors, 'Content-Type': 'application/json; charset=utf-8' } });
 
     if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
+    const url = new URL(req.url);
+    if (req.method === 'GET' && url.pathname === '/voz') return voz(req, url, env, ctx);
     if (req.method === 'GET') return json({ ok: true, name: 'Lía' });
     if (req.method !== 'POST' || !allowed.includes(origin)) return json({ error: 'forbidden' }, 403);
     // Aceita o Secret com o nome OPENAI_API_KEY ou, se tiver outro nome, qualquer Secret com uma chave da OpenAI.
